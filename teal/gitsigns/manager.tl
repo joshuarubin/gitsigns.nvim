@@ -95,6 +95,10 @@ end
 local ns = api.nvim_create_namespace('gitsigns')
 
 local function apply_word_diff(bufnr: integer, row: integer)
+  if vim.fn.foldclosed(row+1) ~= -1 then
+    return
+  end
+
   if not cache[bufnr] or not cache[bufnr].hunks then
     return
   end
@@ -420,16 +424,45 @@ M.reset_signs = function()
   signs:reset()  -- Remove all signs
 end
 
+local function get_visible_line_regions(winid: integer, top: integer, bot: integer): {{integer, integer}}
+  local winheight = api.nvim_win_get_height(winid)
+
+  local regions = {}
+
+  if bot - top > winheight then
+    local last_row = top
+    local row = top
+    while row <= bot do
+      local foldclosedend = vim.fn.foldclosedend(row+1)
+      if foldclosedend ~= -1 then
+        regions[#regions+1] = {last_row, row - 1}
+        last_row = foldclosedend
+        row = foldclosedend
+      else
+        row = row + 1
+      end
+    end
+  else
+    regions[#regions+1] = {top, bot}
+  end
+
+  return regions
+end
+
 M.setup = function()
   -- Calling this before any await calls will stop nvim's intro messages being
   -- displayed
   api.nvim_set_decoration_provider(ns, {
-    on_win = function(_, _, bufnr: integer, top: integer, bot: integer): boolean
+    on_win = function(_, winid: integer, bufnr: integer, top: integer, bot: integer): boolean
       local bcache = cache[bufnr]
       if not bcache or not bcache.hunks then
         return false
       end
-      apply_win_signs(bufnr, bcache.hunks, top+1, bot+1)
+
+      for _, region in ipairs(get_visible_line_regions(winid, top, bot)) do
+        local rtop, rbot = unpack(region)
+        apply_win_signs(bufnr, bcache.hunks, rtop+1, rbot+1)
+      end
 
       if not (config.word_diff and config.diff_opts.internal) then
         return false
